@@ -40,6 +40,7 @@ integer(i_kind), parameter :: nsegm = 10  ! number of segment
 real(r_single)  :: longitude(npixel, nline)
 real(r_single)  :: latitude(npixel, nline)
 real(r_single)  :: brit(npixel, nline, nband)
+real(r_kind)    :: bt_sup(npixel, nline, nband)   ! superobbed brightness temperature(superobpixel, superobline, nband)
 real(r_single)  :: solzen(npixel, nline)
 real(r_single)  :: satzen(npixel, nline)
 logical         :: valid(npixel, nline)
@@ -222,12 +223,14 @@ real(r_double), parameter :: rad2deg = 180.0/pi
 
 contains
 
-subroutine read_HSD(ccyymmddhhnn, inpdir)
+subroutine read_HSD(ccyymmddhhnn, inpdir, do_superob, superob_halfwidth)
 
 implicit none
 
 character(len=12), intent(in) :: ccyymmddhhnn
 character(len=*),  intent(in) :: inpdir
+logical,           intent(in) :: do_superob
+integer(i_kind),   intent(in) :: superob_halfwidth
 
 character(len=1051) :: dummy1051
 character(len=1)    :: dummy1
@@ -246,24 +249,30 @@ integer(i_kind) :: numCorrect
 integer(i_kind) :: numObs
 integer(i_kind) :: ipixel, iline
 integer(i_kind) :: startLine, endLine
-integer(i_kind) :: count, i, ii, jj, ij, iv
+integer(i_kind) :: radcount, i, ii, jj, ij, iv
 integer(i_kind) :: iband, isegm
 integer(i_kind) :: ierr
 integer(i_kind) :: nlocs, nvars, iloc
-integer(i_kind) :: ihh, imm, idd, jday
+integer(i_kind) :: ihh, imm, idd, jday, flength, rvalue, offset
 integer(i_kind) :: iunit = 21
 real(r_double)  :: lon, lat
 real(r_double)  :: radiance, tbb
 real(r_double)  :: lon_sat, h_sat, r_eq
+integer(i_kind) :: nodivisionsegm = 1
+integer         :: superob_width ! Must be ≥ 0
+integer         :: first_boxcenter, last_boxcenter_x, last_boxcenter_y, box_bottom, box_upper, box_left, box_right
+integer         :: ibox, jbox, nkeep, ix, iy, tb, k
+real(r_kind)    :: temp1 = 0.0
 ! end of declaration
 continue
 
 longitude(:,:) = missing_r
 latitude(:,:)  = missing_r
-brit(:,:,:) = missing_r
-solzen(:,:) = missing_r
-satzen(:,:) = missing_r
-valid(:,:)  = .false.
+brit(:,:,:)    = missing_r
+bt_sup(:,:,:)  = missing_r
+solzen(:,:)    = missing_r
+satzen(:,:)    = missing_r
+valid(:,:)     = .false.
 
 ! construct file names
 nfile = nband * nsegm
@@ -294,6 +303,11 @@ do iband = 1, nband
 !write(33,*) 'wget -np -nd -nc http://noaa-himawari8.s3.amazonaws.com/AHI-L1b-FLDK/' &
 !& //ccyy//'/'//mm//'/'//dd//'/'//hhnn//'/'//trim(fnames(ij))//'.bz2'
       inquire(file=trim(fnames(ij)), exist=fexist(ij))
+      if ( fexist(ij) == .false. ) then
+         write(segment,'(a,i2.2,i2.2)') 'S', isegm, nodivisionsegm
+         fnames(ij) = trim(inpdir)//'HS_'//satellite//'_'//ccyymmdd//'_'//hhnn//'_'//band//'_'//region//'_'//resolution//'_'//segment//'.DAT'
+         inquire(file=trim(fnames(ij)), exist=fexist(ij))
+      end if
 !print*,iband, isegm, trim(fnames(ij)), fexist(ij)
    end do
 end do
@@ -302,85 +316,143 @@ do iband = 1, nband
    do isegm = 1, nsegm
       ifile = isegm + (iband-1) * nsegm
       if ( .not. fexist(ifile) ) cycle
-      open(iunit, file=trim(fnames(ifile)), form='unformatted', access='stream', status='old')
+      open(iunit, file=trim(fnames(ifile)), form='unformatted', action='read', access='stream', status='old', convert='little_endian')
+      print*,'Reading from ', trim(fnames(ifile))
 
-print*,'Reading from ', trim(fnames(ifile))
-      read(iunit) header%basic, &
-                  header%data,  &
-                  header%proj,  &
-                  header%navi,  &
-                  header%calib, &
-                  header%interCalib, &
-                  header%segm,  &
-                  header%navicorr%headerNum, &
-             header%navicorr%blockLen, &
-             header%navicorr%RoCenterColumn, &
-             header%navicorr%RoCenterLine, &
-             header%navicorr%RoCorrection, &
-             header%navicorr%correctNum
+      read(iunit) header%basic%headerNum, &
+                  header%basic%blockLen, &
+                  header%basic%numHeader, &
+                  header%basic%byteOrder, &
+                  header%basic%satName, &
+                  header%basic%procCenter, &
+                  header%basic%obsArea, &
+                  header%basic%dummy2, &
+                  header%basic%hhnn, &
+                  header%basic%obsStartTime, &
+                  header%basic%obsEndTime, &
+                  header%basic%fileCreateTime, &
+                  header%basic%totalHeaderLen, &
+                  header%basic%dataLen, &
+                  header%basic%qcflag1, &
+                  header%basic%qcflag2, &
+                  header%basic%qcflag3, &
+                  header%basic%qcflag4, &
+                  header%basic%version, &
+                  header%basic%fileName, &
+                  header%basic%dummy40
+      read(iunit) header%data%headerNum, &
+                  header%data%blockLen,&
+                  header%data%bitPix, &
+                  header%data%nPix, &
+                  header%data%nLin, &
+                  header%data%compression, &
+                  header%data%dummy40
+      read(iunit) header%proj%headerNum, &
+                  header%proj%blockLen, &
+                  header%proj%subLon, &
+                  header%proj%cfac, &
+                  header%proj%lfac, &
+                  header%proj%coff, &
+                  header%proj%loff, &
+                  header%proj%satDis, &
+                  header%proj%eqtrRadius, &
+                  header%proj%polrRadius, &
+                  header%proj%projParam1, &
+                  header%proj%projParam2, &
+                  header%proj%projParam3, &
+                  header%proj%projParamSd, &
+                  header%proj%resampleKind, &
+                  header%proj%resampleSize, &
+                  header%proj%dummy40
+      read(iunit) header%navi%headerNum, &
+                  header%navi%blockLen, &
+                  header%navi%navTime, &
+                  header%navi%sspLon, &
+                  header%navi%sspLat, &
+                  header%navi%satDis, &
+                  header%navi%nadirLon, &
+                  header%navi%nadirLat, &
+                  header%navi%sunPos_x, &
+                  header%navi%sunPos_y, &
+                  header%navi%sunPos_z, &
+                  header%navi%moonPos_x, &
+                  header%navi%moonPos_y, &
+                  header%navi%moonPos_z, &
+                  header%navi%dummy40
+      read(iunit) header%calib%headerNum, &
+                  header%calib%blockLen, &
+                  header%calib%bandNo, &
+                  header%calib%waveLen, &
+                  header%calib%bitPix, &
+                  header%calib%errorCount, &
+                  header%calib%outCount, &
+                  header%calib%gain_cnt2rad, &
+                  header%calib%cnst_cnt2rad, &
+                  header%calib%rad2btp_c0, &
+                  header%calib%rad2btp_c1, &
+                  header%calib%rad2btp_c2, &
+                  header%calib%btp2rad_c0, &
+                  header%calib%btp2rad_c1, &
+                  header%calib%btp2rad_c2, &
+                  header%calib%lightSpeed, &
+                  header%calib%planckConst, &
+                  header%calib%bolzConst, &
+                  header%calib%dummy40
+      read(iunit) header%interCalib%headerNum, &
+                  header%interCalib%blockLen, &
+                  header%interCalib%dummy256
+      read(iunit) header%segm%headerNum, &
+                  header%segm%blockLen, &
+                  header%segm%totalSegNum, &
+                  header%segm%segSeqNo, &
+                  header%segm%startLineNo, &
+                  header%segm%dummy40
+      read(iunit) header%navicorr%headerNum, &
+                  header%navicorr%blockLen, &
+                  header%navicorr%RoCenterColumn, &
+                  header%navicorr%RoCenterLine, &
+                  header%navicorr%RoCorrection, &
+                  header%navicorr%correctNum
       if ( header%navicorr%correctNum > 0 ) then
          numCorrect = header%navicorr%correctNum
          allocate(header%navicorr%lineNo(numCorrect))
          allocate(header%navicorr%columnShift(numCorrect))
          allocate(header%navicorr%lineShift(numCorrect))
       end if
+      read(iunit) header%navicorr%lineNo(numCorrect), &
+                  header%navicorr%columnShift(numCorrect), &
+                  header%navicorr%lineShift(numCorrect), &
+                  header%navicorr%dummy40
       rewind(iunit)
-      read(iunit) header%basic, &
-                  header%data,  &
-                  header%proj,  &
-                  header%navi,  &
-                  header%calib, &
-                  header%interCalib, &
-                  header%segm,  &
-                  header%navicorr%headerNum, &
-                  header%navicorr%blockLen, &
-                  header%navicorr%RoCenterColumn, &
-                  header%navicorr%RoCenterLine, &
-                  header%navicorr%RoCorrection, &
-                  header%navicorr%correctNum, &
-                  header%navicorr%lineNo, &
-                  header%navicorr%columnShift, &
-                  header%navicorr%lineShift, &
-                  header%navicorr%dummy40, &
-                  header%obsTime%headerNum, &
-                  header%obsTime%blockLen, &
-                  header%obsTime%obsNum
+      read(iunit) header%obstime%headerNum, &
+                  header%obstime%blockLen, &
+                  header%obstime%obsNum
       if ( header%obsTime%obsNum > 0 ) then
          numObs = header%obsTime%obsNum
          allocate(header%obsTime%lineNo(numObs))
          allocate(header%obsTime%obsMJD(numObs))
       end if
+      read(iunit) header%obstime%lineNo, &
+                  header%obstime%obsMJD, &
+                  header%obstime%dummy40
+      read(iunit) header%error%headerNum, &
+                  header%error%blockLen, &
+                  header%error%errorNum, &
+                  header%error%dummy40
+      read(iunit) header%dummy%headerNum, &
+                  header%dummy%blockLen, &
+                  header%dummy%dummy256
       npix = header%data%nPix
       nlin = header%data%nLin
       ntotal = npix * nlin
       allocate(idata(ntotal))
-      rewind(iunit)
-      read(iunit) header%basic, &
-                  header%data,  &
-                  header%proj,  &
-                  header%navi,  &
-                  header%calib, &
-                  header%interCalib, &
-                  header%segm,  &
-                  header%navicorr%headerNum, &
-                  header%navicorr%blockLen, &
-                  header%navicorr%RoCenterColumn, &
-                  header%navicorr%RoCenterLine, &
-                  header%navicorr%RoCorrection, &
-                  header%navicorr%correctNum, &
-                  header%navicorr%lineNo, &
-                  header%navicorr%columnShift, &
-                  header%navicorr%lineShift, &
-                  header%navicorr%dummy40, &
-                  header%obsTime%headerNum, &
-                  header%obsTime%blockLen, &
-                  header%obsTime%obsNum, &
-                  header%obsTime%lineNo, &
-                  header%obsTime%obsMJD, &
-                  header%obsTime%dummy40, &
-                  header%error, &
-                  header%dummy, &
-                  idata
+
+      inquire(file=trim(fnames(ifile)), size=flength)
+      ! Offset relative to the beginning of the file
+      offset = flength - (npix * nlin *2)
+      ! Reposition the file to the offset value for reading
+      call fseek(iunit, offset, 0, rvalue)
+      read(iunit)idata(:)
 
       startLine = header%segm%startLineNo
       endLine = startLine + header%data%nLin - 1
@@ -426,12 +498,12 @@ print*,'Reading from ', trim(fnames(ifile))
                end if
             end if
 
-            count = idata(ij)
-            if ( count /= header%calib%outCount .and. &
-                 count /= header%calib%errorCount .and. &
-                 count > 0 ) then
+            radcount = idata(ij)
+            if ( radcount /= header%calib%outCount .and. &
+                 radcount /= header%calib%errorCount .and. &
+                 radcount > 0 ) then
                ! convert count value to radiance
-               radiance = count * header%calib%gain_cnt2rad + &
+               radiance = radcount * header%calib%gain_cnt2rad + &
                           header%calib%cnst_cnt2rad
                radiance = radiance * 1000000.0  ! [ W/(m^2 sr micro m)] => [ W/(m^2 sr m)]
                ! convert radiance to physical value
@@ -440,7 +512,7 @@ print*,'Reading from ', trim(fnames(ifile))
                call hisd_radiance_to_tbb(radiance, tbb)
                ! visible or near infrared band
                !  data->phys[kk] = header[n]->calib->rad2albedo * radiance
-!print*,iband+6, ij, ii, jj, count, tbb, lon, lat, solzen(ipixel, iline), satzen(ipixel, iline)
+!print*,iband+6, ij, ii, jj, radcount, tbb, lon, lat, solzen(ipixel, iline), satzen(ipixel, iline)
                brit(ipixel, iline, iband) = tbb
             end if
 
@@ -457,7 +529,6 @@ print*,'Reading from ', trim(fnames(ifile))
          deallocate(header%navicorr%columnShift)
          deallocate(header%navicorr%lineShift)
       end if
-
       close(iunit)
 
    end do
@@ -466,112 +537,280 @@ end do
 deallocate (fexist)
 deallocate (fnames)
 
-!print*,'transfering to xdata'
-
-nlocs = 0
-do jj = 1, nline , subsample
-   do ii = 1, npixel , subsample
-      if ( valid(ii,jj) ) then
-         nlocs = nlocs + 1
-      end if
-   end do
-end do
-
-allocate(xdata(1,1))
-nvars = nband
-xdata(1,1) % nlocs = nlocs
-xdata(1,1) % nrecs = nlocs
-xdata(1,1) % nvars = nvars
-! allocate and initialize
-allocate (xdata(1,1)%xinfo_float(nlocs, nvar_info))
-allocate (xdata(1,1)%xinfo_int  (nlocs, nvar_info))
-allocate (xdata(1,1)%xinfo_char (nlocs, nvar_info))
-allocate (xdata(1,1)%xseninfo_float(nlocs, nsen_info))
-allocate (xdata(1,1)%xseninfo_int  (nvars, nsen_info))
-xdata(1,1)%xinfo_float   (:,:) = missing_r
-xdata(1,1)%xinfo_int     (:,:) = missing_i
-xdata(1,1)%xinfo_char    (:,:) = ''
-xdata(1,1)%xseninfo_float(:,:) = missing_r
-xdata(1,1)%xseninfo_int  (:,:) = missing_i
-if ( nvars > 0 ) then
-   allocate (xdata(1,1)%xfield(nlocs, nvars))
-   xdata(1,1)%xfield(:,:)%val = missing_r
-   xdata(1,1)%xfield(:,:)%qm  = missing_i
-   xdata(1,1)%xfield(:,:)%err = missing_r
-   allocate (xdata(1,1)%var_idx(nvars))
-   do iv = 1, nvars
-      xdata(1,1)%var_idx(iv) = iv
-   end do
-end if
-
 datetime = ccyy//'-'//mm//'-'//dd//'T'//hh//':'//nn//':00Z'
 read (ccyymmddhhnn,'(i4,4i2)') iyear, imonth, iday, ihour, imin
 isec = 0
 call get_julian_time(iyear, imonth, iday, ihour, imin, isec, gstime, epochtime)
 
-iloc = 0
-do jj = 1, nline, subsample
-   do ii = 1, npixel, subsample
-      if ( .not. valid(ii,jj) ) cycle
-      iloc = iloc + 1
+! do superobbing of ahi_himawari observations
+! npixel => x direction => nx
+! nline  => y direction => ny
+if ( do_superob ) then
+  nlocs = 0
+  superob_width = 2*superob_halfwidth+1
 
-!print*,ii,jj, latitude(ii,jj), longitude(ii,jj), satzen(ii,jj), solzen(ii,jj), brit(ii,jj,1)
+  ! start y_loop
 
-      do i = 1, nvar_info
-         if ( type_var_info(i) == nf90_int ) then
-         else if ( type_var_info(i) == nf90_float ) then
-            if ( trim(name_var_info(i)) == 'station_elevation' ) then
-               xdata(1,1)%xinfo_float(iloc,i) = missing_r
-            else if ( trim(name_var_info(i)) == 'latitude' ) then
-               xdata(1,1)%xinfo_float(iloc,i) = latitude(ii,jj)
-            else if ( trim(name_var_info(i)) == 'longitude' ) then
-               xdata(1,1)%xinfo_float(iloc,i) = longitude(ii,jj)
-            end if
-         else if ( type_var_info(i) == nf90_char ) then
-            if ( trim(name_var_info(i)) == 'datetime' ) then
-               xdata(1,1)%xinfo_char(iloc,i) = datetime
-            else if ( trim(name_var_info(i)) == 'station_id' ) then
-               xdata(1,1)%xinfo_char(iloc,i) = 'ahi_himawari8'
-            end if
-         else if ( type_var_info(i) == nf90_int64 ) then
-            if ( trim(name_var_info(i)) == 'dateTime' ) then
-               xdata(1,1)%xinfo_int64(iloc,i) = epochtime
-            end if
-         end if
-      end do
+  first_boxcenter = superob_halfwidth + 1
+  last_boxcenter_y = superob_width * (nline / superob_width) - superob_halfwidth
+  last_boxcenter_x = superob_width * (npixel / superob_width) - superob_halfwidth
 
-      do i = 1, nsen_info
-         if ( type_sen_info(i) == nf90_float ) then
-            if ( trim(name_sen_info(i)) == 'scan_position' ) then
-               xdata(1,1)%xseninfo_float(iloc,i) = ii
-            else if ( trim(name_sen_info(i)) == 'sensor_zenith_angle' ) then
-               xdata(1,1)%xseninfo_float(iloc,i) = satzen(ii,jj)
-            else if ( trim(name_sen_info(i)) == 'solar_zenith_angle' ) then
-               xdata(1,1)%xseninfo_float(iloc,i) = solzen(ii,jj)
-            else if ( trim(name_sen_info(i)) == 'sensor_azimuth_angle' ) then
-               xdata(1,1)%xseninfo_float(iloc,i) = missing_r
-            else if ( trim(name_sen_info(i)) == 'solar_azimuth_angle' ) then
-               xdata(1,1)%xseninfo_float(iloc,i) = missing_r
-            else if ( trim(name_sen_info(i)) == 'sensor_view_angle' ) then
-               !call calc_sensor_view_angle(trim(rlink%inst), rlink%scanpos, xdata(1,1)%xseninfo_float(iloc,i))
-               xdata(1,1)%xseninfo_float(iloc,i) = satzen(ii,jj)
-            end if
-!         else if ( type_sen_info(i) == nf90_int ) then
-!         else if ( type_sen_info(i) == nf90_char ) then
-         end if
-      end do
+  do iy=first_boxcenter, nline, superob_width
+    valid_loop:      do ix=first_boxcenter, npixel, superob_width
+        if ( .not. valid(ix,iy)) cycle
+        if ( satzen(ix,iy)  > 65.0 ) cycle valid_loop
+        if ( all(brit(ix,iy,:) < 0.0) ) cycle
+        nlocs = nlocs + 1
+    end do valid_loop
+  end do
 
-      iv = ufo_vars_getindex(name_sen_info, 'sensor_channel')
-      xdata(1,1)%xseninfo_int(:,iv) = (/ 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 /)
+  write(0,*) 'nlocs = ', nlocs
+  if ( nlocs <= 0 ) then
+    return
+  end if
 
-      do i = 1, nvars
-         xdata(1,1)%xfield(iloc,i)%val = brit(ii,jj,i)
-         xdata(1,1)%xfield(iloc,i)%err = 1.0
-         !call set_brit_obserr(trim(rlink%inst), i, xdata(1,1)%xfield(iloc,i)%err)
-         xdata(1,1)%xfield(iloc,i)%qm  = 0
-      end do
-   end do
-end do
+  !print*,'transfering to xdata'
+
+  allocate(xdata(1,1))
+  nvars = nband
+  xdata(1,1) % nlocs = nlocs
+  xdata(1,1) % nrecs = nlocs
+  xdata(1,1) % nvars = nvars
+  ! allocate and initialize
+  allocate (xdata(1,1)%xinfo_float(nlocs, nvar_info))
+  allocate (xdata(1,1)%xinfo_int  (nlocs, nvar_info))
+  allocate (xdata(1,1)%xinfo_char (nlocs, nvar_info))
+  allocate (xdata(1,1)%xseninfo_float(nlocs, nsen_info))
+  allocate (xdata(1,1)%xseninfo_int  (nvars, nsen_info))
+  allocate (xdata(1,1)%xinfo_int64(nlocs, nvar_info))
+  xdata(1,1)%xinfo_float   (:,:) = missing_r
+  xdata(1,1)%xinfo_int     (:,:) = missing_i
+  xdata(1,1)%xinfo_char    (:,:) = ''
+  xdata(1,1)%xseninfo_float(:,:) = missing_r
+  xdata(1,1)%xseninfo_int  (:,:) = missing_i
+  xdata(1,1)%xinfo_int64   (:,:) = 0
+  if ( nvars > 0 ) then
+     allocate (xdata(1,1)%xfield(nlocs, nvars))
+     xdata(1,1)%xfield(:,:)%val = missing_r
+     xdata(1,1)%xfield(:,:)%qm  = missing_i
+     xdata(1,1)%xfield(:,:)%err = missing_r
+     allocate (xdata(1,1)%var_idx(nvars))
+     do iv = 1, nvars
+        xdata(1,1)%var_idx(iv) = iv
+     end do
+  end if
+
+  iloc = 0
+  y_loop:     do iy=first_boxcenter, nline, superob_width
+  ! start x_loop
+     jbox = iy/superob_width + 1
+     if ( superob_halfwidth .gt. 0 ) then
+        box_bottom = superob_width * (jbox-1) +1
+        box_upper  = superob_width * jbox
+     else
+        box_bottom = superob_width * (jbox-1)
+        box_upper  = superob_width * (jbox-1)
+     end if
+
+     x_loop:      do ix=first_boxcenter, npixel, superob_width
+        if ( .not. valid(ix,iy) ) cycle
+        if ( satzen(ix,iy)  > 65.0 ) cycle x_loop
+        if ( all(brit(ix,iy,:) < 0.0) ) cycle
+
+        ibox = ix/superob_width + 1
+        if ( superob_halfwidth .gt. 0 ) then
+           box_left  = superob_width * (ibox-1) +1 ! will exceed nlatitude/nlongitude if superob_halfwidth = 0
+           box_right = superob_width * ibox
+        else
+           box_left  = superob_width * (ibox-1)
+           box_right = superob_width * (ibox-1)
+        end if
+
+        if ( box_right .gt. npixel ) then
+           box_right = npixel
+        end if
+
+        if ( box_upper .gt. nline ) then
+           box_upper = nline
+        end if
+
+        iloc = iloc + 1
+        ! Super-ob BT for this channel
+        do k = 1, nband
+           nkeep = count(brit(box_left:box_right,box_bottom:box_upper,k) > 0.0 )
+           temp1 = sum  (brit(box_left:box_right,box_bottom:box_upper,k), &
+                         brit(box_left:box_right,box_bottom:box_upper,k) > 0.0 )
+           if (superob_halfwidth .gt.0 .and. nkeep .gt. 0) then
+              tb = temp1 / real(nkeep,8)
+           else
+              ! Extract single pixel BT and radiance value for this channel
+              tb = brit(ix,iy,k)
+           end if
+           bt_sup(ix,iy,k) = tb
+        end do
+  !print*,ix,iy, latitude(ix,iy), longitude(ix,iy), satzen(ix,iy), solzen(ix,iy), bt_sup(ix,iy,2)
+
+        do i = 1, nvar_info
+           if ( type_var_info(i) == nf90_int ) then
+           else if ( type_var_info(i) == nf90_float ) then
+              if ( trim(name_var_info(i)) == 'station_elevation' ) then
+                 xdata(1,1)%xinfo_float(iloc,i) = missing_r
+              else if ( trim(name_var_info(i)) == 'latitude' ) then
+                 xdata(1,1)%xinfo_float(iloc,i) = latitude(ix,iy)
+              else if ( trim(name_var_info(i)) == 'longitude' ) then
+                 xdata(1,1)%xinfo_float(iloc,i) = longitude(ix,iy)
+              end if
+           else if ( type_var_info(i) == nf90_char ) then
+              if ( trim(name_var_info(i)) == 'datetime' ) then
+                 xdata(1,1)%xinfo_char(iloc,i) = datetime
+              else if ( trim(name_var_info(i)) == 'station_id' ) then
+                 xdata(1,1)%xinfo_char(iloc,i) = 'ahi_himawari8'
+              end if
+           else if ( type_var_info(i) == nf90_int64 ) then
+              if ( trim(name_var_info(i)) == 'dateTime' ) then
+                 xdata(1,1)%xinfo_int64(iloc,i) = epochtime
+              end if
+           end if
+        end do
+
+        do i = 1, nsen_info
+           if ( type_sen_info(i) == nf90_float ) then
+              if ( trim(name_sen_info(i)) == 'scan_position' ) then
+                 xdata(1,1)%xseninfo_float(iloc,i) = ix
+              else if ( trim(name_sen_info(i)) == 'sensor_zenith_angle' ) then
+                 xdata(1,1)%xseninfo_float(iloc,i) = satzen(ix,iy)
+              else if ( trim(name_sen_info(i)) == 'solar_zenith_angle' ) then
+                 xdata(1,1)%xseninfo_float(iloc,i) = solzen(ix,iy)
+              else if ( trim(name_sen_info(i)) == 'sensor_azimuth_angle' ) then
+                 xdata(1,1)%xseninfo_float(iloc,i) = missing_r
+              else if ( trim(name_sen_info(i)) == 'solar_azimuth_angle' ) then
+                 xdata(1,1)%xseninfo_float(iloc,i) = missing_r
+              else if ( trim(name_sen_info(i)) == 'sensor_view_angle' ) then
+                 !call calc_sensor_view_angle(trim(rlink%inst), rlink%scanpos, xdata(1,1)%xseninfo_float(iloc,i))
+                 xdata(1,1)%xseninfo_float(iloc,i) = satzen(ix,iy)
+              end if
+  !         else if ( type_sen_info(i) == nf90_int ) then
+  !         else if ( type_sen_info(i) == nf90_char ) then
+           end if
+        end do
+
+        iv = ufo_vars_getindex(name_sen_info, 'sensor_channel')
+        xdata(1,1)%xseninfo_int(:,iv) = (/ 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 /)
+
+        do i = 1, nvars
+           xdata(1,1)%xfield(iloc,i)%val = bt_sup(ix,iy,i)
+           xdata(1,1)%xfield(iloc,i)%err = 1.0
+           !call set_brit_obserr(trim(rlink%inst), i, xdata(1,1)%xfield(iloc,i)%err)
+           xdata(1,1)%xfield(iloc,i)%qm  = 0
+        end do
+     end do x_loop
+  end do y_loop
+
+else
+  nlocs = 0
+  do jj = 1, nline , subsample
+     do ii = 1, npixel , subsample
+        if ( valid(ii,jj) ) then
+           nlocs = nlocs + 1
+        end if
+     end do
+  end do
+
+  !print*,'transfering to xdata'
+
+  allocate(xdata(1,1))
+  nvars = nband
+  xdata(1,1) % nlocs = nlocs
+  xdata(1,1) % nrecs = nlocs
+  xdata(1,1) % nvars = nvars
+  ! allocate and initialize
+  allocate (xdata(1,1)%xinfo_float(nlocs, nvar_info))
+  allocate (xdata(1,1)%xinfo_int  (nlocs, nvar_info))
+  allocate (xdata(1,1)%xinfo_char (nlocs, nvar_info))
+  allocate (xdata(1,1)%xseninfo_float(nlocs, nsen_info))
+  allocate (xdata(1,1)%xseninfo_int  (nvars, nsen_info))
+  allocate (xdata(1,1)%xinfo_int64(nlocs, nvar_info))
+  xdata(1,1)%xinfo_float   (:,:) = missing_r
+  xdata(1,1)%xinfo_int     (:,:) = missing_i
+  xdata(1,1)%xinfo_char    (:,:) = ''
+  xdata(1,1)%xseninfo_float(:,:) = missing_r
+  xdata(1,1)%xseninfo_int  (:,:) = missing_i
+  xdata(1,1)%xinfo_int64   (:,:) = 0
+  if ( nvars > 0 ) then
+     allocate (xdata(1,1)%xfield(nlocs, nvars))
+     xdata(1,1)%xfield(:,:)%val = missing_r
+     xdata(1,1)%xfield(:,:)%qm  = missing_i
+     xdata(1,1)%xfield(:,:)%err = missing_r
+     allocate (xdata(1,1)%var_idx(nvars))
+     do iv = 1, nvars
+        xdata(1,1)%var_idx(iv) = iv
+     end do
+  end if
+
+  ! do thinning every subsample pixels
+  do jj = 1, nline, subsample
+     do ii = 1, npixel, subsample
+        if ( .not. valid(ii,jj) ) cycle
+        iloc = iloc + 1
+  !print*,ii,jj, latitude(ii,jj), longitude(ii,jj), satzen(ii,jj), solzen(ii,jj), brit(ii,jj,1)
+
+        do i = 1, nvar_info
+           if ( type_var_info(i) == nf90_int ) then
+           else if ( type_var_info(i) == nf90_float ) then
+              if ( trim(name_var_info(i)) == 'station_elevation' ) then
+                 xdata(1,1)%xinfo_float(iloc,i) = missing_r
+              else if ( trim(name_var_info(i)) == 'latitude' ) then
+                 xdata(1,1)%xinfo_float(iloc,i) = latitude(ii,jj)
+              else if ( trim(name_var_info(i)) == 'longitude' ) then
+                 xdata(1,1)%xinfo_float(iloc,i) = longitude(ii,jj)
+              end if
+           else if ( type_var_info(i) == nf90_char ) then
+              if ( trim(name_var_info(i)) == 'datetime' ) then
+                 xdata(1,1)%xinfo_char(iloc,i) = datetime
+              else if ( trim(name_var_info(i)) == 'station_id' ) then
+                 xdata(1,1)%xinfo_char(iloc,i) = 'ahi_himawari8'
+              end if
+           else if ( type_var_info(i) == nf90_int64 ) then
+              if ( trim(name_var_info(i)) == 'dateTime' ) then
+                 xdata(1,1)%xinfo_int64(iloc,i) = epochtime
+              end if
+           end if
+        end do
+
+        do i = 1, nsen_info
+           if ( type_sen_info(i) == nf90_float ) then
+              if ( trim(name_sen_info(i)) == 'scan_position' ) then
+                 xdata(1,1)%xseninfo_float(iloc,i) = ii
+              else if ( trim(name_sen_info(i)) == 'sensor_zenith_angle' ) then
+                 xdata(1,1)%xseninfo_float(iloc,i) = satzen(ii,jj)
+              else if ( trim(name_sen_info(i)) == 'solar_zenith_angle' ) then
+                 xdata(1,1)%xseninfo_float(iloc,i) = solzen(ii,jj)
+              else if ( trim(name_sen_info(i)) == 'sensor_azimuth_angle' ) then
+                 xdata(1,1)%xseninfo_float(iloc,i) = missing_r
+              else if ( trim(name_sen_info(i)) == 'solar_azimuth_angle' ) then
+                 xdata(1,1)%xseninfo_float(iloc,i) = missing_r
+              else if ( trim(name_sen_info(i)) == 'sensor_view_angle' ) then
+                 !call calc_sensor_view_angle(trim(rlink%inst), rlink%scanpos, xdata(1,1)%xseninfo_float(iloc,i))
+                 xdata(1,1)%xseninfo_float(iloc,i) = satzen(ii,jj)
+              end if
+  !         else if ( type_sen_info(i) == nf90_int ) then
+  !         else if ( type_sen_info(i) == nf90_char ) then
+           end if
+        end do
+
+        iv = ufo_vars_getindex(name_sen_info, 'sensor_channel')
+        xdata(1,1)%xseninfo_int(:,iv) = (/ 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 /)
+
+        do i = 1, nvars
+           xdata(1,1)%xfield(iloc,i)%val = brit(ii,jj,i)
+           xdata(1,1)%xfield(iloc,i)%err = 1.0
+           !call set_brit_obserr(trim(rlink%inst), i, xdata(1,1)%xfield(iloc,i)%err)
+           xdata(1,1)%xfield(iloc,i)%qm  = 0
+        end do
+     end do
+  end do
+
+end if ! if do_superob
 
 end subroutine read_HSD
 
@@ -599,6 +838,7 @@ subroutine pixlin_to_lonlat(pix, lin, lon, lat, ierr)
 
  ! intermediate coordinates (x,y)
  ! Global Specification 4.4.4 Scaling Function
+ ! https://www.cgms-info.org/wp-content/uploads/2021/10/cgms-lrit-hrit-global-specification-(v2-8-of-30-oct-2013).pdf
  !    c = COFF + nint(x * 2^-16 * CFAC)
  !    l = LOFF + nint(y * 2^-16 * LFAC)
  ! The intermediate coordinates (x,y) are as follows :
