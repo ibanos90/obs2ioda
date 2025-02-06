@@ -1,10 +1,10 @@
 module netcdf_cxx_mod
-    use iso_c_binding, only : c_int, c_ptr, c_null_ptr, c_loc, c_float, c_long
+    use iso_c_binding, only : c_int, c_ptr, c_null_ptr, c_loc, c_float, c_long, c_f_pointer
     use f_c_string_t_mod, only : f_c_string_t
     use f_c_string_1D_t_mod, only : f_c_string_1D_t
     use netcdf_cxx_i_mod, only : c_netcdfCreate, c_netcdfClose, c_netcdfAddGroup, c_netcdfAddDim, &
-            c_netcdfAddVar, c_netcdfPutVarInt, c_netcdfPutVarInt64, c_netcdfPutVarReal, c_netcdfPutVarString
-    use netcdf, only : NF90_INT, NF90_REAL
+            c_netcdfAddVar, c_netcdfPutVarInt, c_netcdfPutVarInt64, c_netcdfPutVarReal, c_netcdfPutVarString, &
+            c_netcdfSetFillInt, c_netcdfSetFillInt64, c_netcdfSetFillReal, c_netcdfSetFillString
     implicit none
     public
 
@@ -216,6 +216,11 @@ contains
         type(c_ptr) :: c_data
         type(f_c_string_1D_t) :: f_c_string_1D_data
 
+        if (present(groupName)) then
+            c_groupName = f_c_string_groupName%to_c(groupName)
+        else
+            c_groupName = c_null_ptr
+        end if
         c_varName = f_c_string_varName%to_c(varName)
 
         select type (data)
@@ -240,5 +245,68 @@ contains
                     c_varName, c_data)
         end select
     end function netcdfPutVar
+
+    ! netcdfSetFill:
+    !   Sets the fill mode and fill value for a variable in a NetCDF file.
+    !
+    !   Arguments:
+    !     - netcdfID (integer(c_int), intent(in), value):
+    !       The identifier of the NetCDF file containing the variable.
+    !     - varName (character(len=*), intent(in)):
+    !       The name of the variable for which the fill mode is set.
+    !     - fillMode (integer(c_int), intent(in), value):
+    !       The fill mode to be applied:
+    !         - 0: Turn off fill mode (use uninitialized values).
+    !         - 1: Turn on fill mode (use specified fill value).
+    !     - fillValue (class(*), intent(in)):
+    !       The fill value to be applied when fill mode is enabled.
+    !       Must match the data type of the variable.
+    !     - groupName (character(len=*), intent(in), optional):
+    !       The name of the group containing the variable.
+    !       If not provided, the variable is assumed to be a global variable.
+    !
+    !   Returns:
+    !     - integer(c_int): A status code indicating the outcome of the operation:
+    !         - 0: Success.
+    !         - Non-zero: Failure.
+    function netcdfSetFill(netcdfID, varName, fillMode, fillValue, groupName)
+        integer(c_int), value, intent(in) :: netcdfID
+        character(len = *), intent(in) :: varName
+        integer(c_int), value, intent(in) :: fillMode
+        class(*), intent(in) :: fillValue
+        character(len = *), optional, intent(in) :: groupName
+        integer(c_int) :: netcdfSetFill
+        type(f_c_string_t) :: f_c_string_groupName
+        type(f_c_string_t) :: f_c_string_varName
+        type(c_ptr) :: c_groupName
+        type(c_ptr) :: c_varName
+        type(f_c_string_t) :: f_c_string_fillValue
+
+        if (present(groupName)) then
+            c_groupName = f_c_string_groupName%to_c(groupName)
+        else
+            c_groupName = c_null_ptr
+        end if
+        c_varName = f_c_string_varName%to_c(varName)
+
+        select type (fillValue)
+        type is (integer(c_int))
+            netcdfSetFill = c_netcdfSetFillInt(netcdfID, c_groupName, &
+                    c_varName, fillMode, fillValue)
+
+        type is (integer(c_long))
+            netcdfSetFill = c_netcdfSetFillInt64(netcdfID, c_groupName, &
+                    c_varName, fillMode, fillValue)
+
+        type is (real(c_float))
+            netcdfSetFill = c_netcdfSetFillReal(netcdfID, c_groupName, &
+                    c_varName, fillMode, fillValue)
+
+        type is (character(len = *))
+            netcdfSetFill = c_netcdfSetFillString(netcdfID, c_groupName, &
+                    c_varName, fillMode, &
+                    f_c_string_fillValue%to_c(fillValue))
+        end select
+    end function netcdfSetFill
 
 end module netcdf_cxx_mod
