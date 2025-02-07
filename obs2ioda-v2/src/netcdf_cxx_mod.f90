@@ -193,7 +193,7 @@ contains
     !       The identifier of the NetCDF file where the data will be written.
     !     - varName (character(len=*), intent(in)):
     !       The name of the variable to which data will be written.
-    !     - data (class(*), dimension(:), intent(in)):
+    !     - values (class(*), dimension(:), intent(in)):
     !       The data to be written to the variable.
     !     - groupName (character(len=*), intent(in), optional):
     !       The name of the group containing the variable.
@@ -203,18 +203,18 @@ contains
     !     - integer(c_int): A status code indicating the outcome of the operation:
     !         - 0: Success.
     !         - Non-zero: Failure.
-    function netcdfPutVar(netcdfID, varName, data, groupName)
+    function netcdfPutVar(netcdfID, varName, values, groupName)
         integer(c_int), value, intent(in) :: netcdfID
         character(len = *), intent(in) :: varName
-        class(*), dimension(:), intent(in) :: data
+        class(*), dimension(:), intent(in) :: values
         character(len = *), optional, intent(in) :: groupName
         integer(c_int) :: netcdfPutVar
         type(f_c_string_t) :: f_c_string_groupName
         type(f_c_string_t) :: f_c_string_varName
         type(c_ptr) :: c_groupName
         type(c_ptr) :: c_varName
-        type(c_ptr) :: c_data
-        type(f_c_string_1D_t) :: f_c_string_1D_data
+        type(c_ptr) :: c_values
+        type(f_c_string_1D_t) :: f_c_string_1D_values
 
         if (present(groupName)) then
             c_groupName = f_c_string_groupName%to_c(groupName)
@@ -223,26 +223,26 @@ contains
         end if
         c_varName = f_c_string_varName%to_c(varName)
 
-        select type (data)
+        select type (values)
         type is (integer(c_int))
-            c_data = c_loc(data)
+            c_values = c_loc(values)
             netcdfPutVar = c_netcdfPutVarInt(netcdfID, c_groupName, &
-                    c_varName, c_data)
+                    c_varName, c_values)
 
         type is (integer(c_long))
-            c_data = c_loc(data)
+            c_values = c_loc(values)
             netcdfPutVar = c_netcdfPutVarInt64(netcdfID, c_groupName, &
-                    c_varName, c_data)
+                    c_varName, c_values)
 
         type is (real(c_float))
-            c_data = c_loc(data)
+            c_values = c_loc(values)
             netcdfPutVar = c_netcdfPutVarReal(netcdfID, c_groupName, &
-                    c_varName, c_data)
+                    c_varName, c_values)
 
         type is (character(len = *))
-            c_data = f_c_string_1D_data%to_c(data)
+            c_values = f_c_string_1D_values%to_c(values)
             netcdfPutVar = c_netcdfPutVarString(netcdfID, c_groupName, &
-                    c_varName, c_data)
+                    c_varName, c_values)
         end select
     end function netcdfPutVar
 

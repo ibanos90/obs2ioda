@@ -44,7 +44,7 @@ namespace Obs2Ioda {
         int netcdfID,
         const char *groupName,
         const char *varName,
-        const T *data
+        const T *values
     ) {
         try {
             auto file = FileMap::getInstance().getFile(netcdfID);
@@ -55,7 +55,7 @@ namespace Obs2Ioda {
                                        file->getGroup(
                                            groupName));
             auto var = group->getVar(varName);
-            var.putVar(data);
+            var.putVar(values);
             return 0;
         } catch (netCDF::exceptions::NcException &e) {
             return netcdfErrorMessage(
@@ -70,13 +70,13 @@ namespace Obs2Ioda {
         int netcdfID,
         const char *groupName,
         const char *varName,
-        const int *data
+        const int *values
     ) {
         return netcdfPutVar(
             netcdfID,
             groupName,
             varName,
-            data
+            values
         );
     }
 
@@ -84,13 +84,13 @@ namespace Obs2Ioda {
         int netcdfID,
         const char *groupName,
         const char *varName,
-        const long long *data
+        const long long *values
     ) {
         return netcdfPutVar(
             netcdfID,
             groupName,
             varName,
-            data
+            values
         );
     }
 
@@ -98,13 +98,13 @@ namespace Obs2Ioda {
         int netcdfID,
         const char *groupName,
         const char *varName,
-        const float *data
+        const float *values
     ) {
         return netcdfPutVar(
             netcdfID,
             groupName,
             varName,
-            data
+            values
         );
     }
 
@@ -112,13 +112,13 @@ namespace Obs2Ioda {
         int netcdfID,
         const char *groupName,
         const char *varName,
-        const char **data
+        const char **values
     ) {
         return netcdfPutVar(
             netcdfID,
             groupName,
             varName,
-            data
+            values
         );
     }
 

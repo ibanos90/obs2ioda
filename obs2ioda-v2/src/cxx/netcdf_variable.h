@@ -35,7 +35,7 @@ namespace Obs2Ioda {
     * @param netcdfID The identifier of the NetCDF file where the data will be written.
     * @param groupName The name of the group containing the variable. If nullptr, the variable is assumed to be in the root group.
     * @param varName The name of the variable to which data will be written.
-    * @param data A pointer to the data to be written to the variable.
+    * @param values A pointer to the data to be written to the variable.
     * @return int A status code indicating the outcome of the operation:
     *         - 0: Success.
     *         - Non-zero: Failure, with an error message logged.
@@ -44,28 +44,28 @@ namespace Obs2Ioda {
         int netcdfID,
         const char *groupName,
         const char *varName,
-        const int *data
+        const int *values
     );
 
     int netcdfPutVarInt64(
         int netcdfID,
         const char *groupName,
         const char *varName,
-        const long long *data
+        const long long *values
     );
 
     int netcdfPutVarReal(
         int netcdfID,
         const char *groupName,
         const char *varName,
-        const float *data
+        const float *values
     );
 
     int netcdfPutVarString(
         int netcdfID,
         const char *groupName,
         const char *varName,
-        const char **data
+        const char **values
     );
 
     /**
