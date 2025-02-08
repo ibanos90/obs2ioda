@@ -201,8 +201,10 @@ contains
     !
     !   Returns:
     !     - integer(c_int): A status code indicating the outcome of the operation:
-    !         - 0: Success.
-    !         - Non-zero: Failure.
+    !         -  0: Success.
+    !         - -1: NetCDF operation returned an error, but the error code was 0.
+    !         - -2: Unsupported type passed for values.
+    !         - Other nonzero values: Specific NetCDF error codes.
     function netcdfPutVar(netcdfID, varName, values, groupName)
         integer(c_int), value, intent(in) :: netcdfID
         character(len = *), intent(in) :: varName
@@ -243,6 +245,8 @@ contains
             c_values = f_c_string_1D_values%to_c(values)
             netcdfPutVar = c_netcdfPutVarString(netcdfID, c_groupName, &
                     c_varName, c_values)
+        class default
+            netcdfPutVar = -2
         end select
     end function netcdfPutVar
 
@@ -267,8 +271,10 @@ contains
     !
     !   Returns:
     !     - integer(c_int): A status code indicating the outcome of the operation:
-    !         - 0: Success.
-    !         - Non-zero: Failure.
+    !         -  0: Success.
+    !         - -1: NetCDF operation returned an error, but the error code was 0.
+    !         - -2: Unsupported type passed for fillValue.
+    !         - Other nonzero values: Specific NetCDF error codes.
     function netcdfSetFill(netcdfID, varName, fillMode, fillValue, groupName)
         integer(c_int), value, intent(in) :: netcdfID
         character(len = *), intent(in) :: varName
@@ -306,6 +312,8 @@ contains
             netcdfSetFill = c_netcdfSetFillString(netcdfID, c_groupName, &
                     c_varName, fillMode, &
                     f_c_string_fillValue%to_c(fillValue))
+        class default
+            netcdfSetFill = -2
         end select
     end function netcdfSetFill
 

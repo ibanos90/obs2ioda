@@ -31,7 +31,6 @@ namespace Obs2Ioda {
     /**
     * @brief Writes data to a variable in a NetCDF file.
     *
-    * @tparam T The data type of the variable.
     * @param netcdfID The identifier of the NetCDF file where the data will be written.
     * @param groupName The name of the group containing the variable. If nullptr, the variable is assumed to be in the root group.
     * @param varName The name of the variable to which data will be written.
@@ -71,7 +70,6 @@ namespace Obs2Ioda {
     /**
     * @brief Sets the fill mode and fill value for a variable in a NetCDF file.
     *
-    * @tparam T The data type of the fill value.
     * @param netcdfID The identifier of the NetCDF file containing the variable.
     * @param groupName The name of the group containing the variable. If nullptr, the variable is assumed to be in the root group.
     * @param varName The name of the variable for which the fill mode is set.
